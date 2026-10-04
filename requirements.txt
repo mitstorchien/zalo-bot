@@ -1,2 +1,3 @@
-zlapi
+flask
+requests
 moviepy
