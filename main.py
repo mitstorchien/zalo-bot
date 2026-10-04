@@ -1,5 +1,5 @@
 from zlapi import ZaloAPI
-from moviepy.editor import VideoFileClip
+from moviepy import VideoFileClip
 import os
 
 # Điền mã Token bạn nhận được vào đây
