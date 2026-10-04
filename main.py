@@ -6,7 +6,7 @@ from moviepy import VideoFileClip
 app = Flask(__name__)
 
 # Thông tin Token Bot từ Zalo Bot Manager
-BOT_TOKEN = "3190358309365122943:zpTuopVRPXUkLTfSffkfkmHdeELRaTBzsZkFaePvtlwxnFotobiFKNOJbfRuAlAa"
+BOT_TOKEN = "3190358309365122943:hCYFHLRIkeKUjgFZHcWvNstmMqmXunnCyYHDVFCcpxEUrCVrXwVRPVVKMFkOiVaD"
 ZALO_BOT_API = f"https://bot-api.zaloplatforms.com/bot{BOT_TOKEN}"
 
 def send_message(chat_id, text):
