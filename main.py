@@ -1,161 +1,137 @@
 import os
 import requests
 from flask import Flask, request, jsonify
-from moviepy import VideoFileClip
 from PIL import Image
+from moviepy import VideoFileClip
 
 app = Flask(__name__)
 
-# Token Zalo Bot của bạn
-BOT_TOKEN = "3190358309365122943:hCYFHLRIkeKUjgFZHcWvNstmMqmXunnCyYHDVFCcpxEUrCVrXwVRPVVKMFkOiVaD"
-ZALO_BOT_API = f"https://bot-api.zaloplatforms.com/bot{BOT_TOKEN}"
+# Lấy Zalo Access Token từ Environment Variable (hoặc điền trực tiếp token của bạn vào đây)
+ZALO_ACCESS_TOKEN = os.getenv("ZALO_ACCESS_TOKEN", "YOUR_ACCESS_TOKEN_HERE")
 
-def send_message(chat_id, text):
-    """Gửi tin nhắn văn bản"""
-    url = f"{ZALO_BOT_API}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text}
-    try:
-        requests.post(url, json=payload, timeout=10)
-    except Exception as e:
-        print("Lỗi send_message:", e)
+def send_zalo_message(user_id, text=None, image_url=None):
+    url = "https://openapi.zalo.me/v2.0/oa/message"
+    headers = {
+        "access_token": ZALO_ACCESS_TOKEN,
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "recipient": {"user_id": user_id},
+        "message": {}
+    }
+    if text:
+        payload["message"]["text"] = text
+    if image_url:
+        payload["message"]["attachment"] = {
+            "type": "template",
+            "payload": {
+                "template_type": "media",
+                "elements": [{
+                    "media_type": "image",
+                    "url": image_url
+                }]
+            }
+        }
+    
+    res = requests.post(url, headers=headers, json=payload)
+    return res.json()
 
-def extract_media_from_msg(msg):
-    """Hàm trích xuất URL ảnh hoặc video từ đối tượng message (bao gồm cả đính kèm trực tiếp hoặc quote/reply)"""
-    media_type = None
-    media_url = None
+def extract_media_info(msg_data, event_data):
+    """Trích xuất URL media và loại media (image/video) từ tin nhắn trực tiếp hoặc quote"""
+    # 1. Trọng tâm: Kiểm tra tin nhắn quote/reply
+    quote = msg_data.get("quote") or msg_data.get("quote_msg") or event_data.get("quote")
+    if quote:
+        attachments = quote.get("attachments", [])
+        if attachments:
+            att = attachments[0]
+            att_type = att.get("type", "")
+            payload = att.get("payload", {})
+            media_url = payload.get("url") or payload.get("thumbnail")
+            if media_url:
+                return media_url, att_type
 
-    # Check trực tiếp trong tin nhắn
-    if "photo" in msg or msg.get("type") == "photo":
-        media_type = "photo"
-        photos = msg.get("photo", [])
-        if isinstance(photos, list) and len(photos) > 0:
-            media_url = photos[-1].get("url") or photos[-1].get("href")
-        elif isinstance(photos, dict):
-            media_url = photos.get("url") or photos.get("href")
-            
-    elif "video" in msg or msg.get("type") == "video":
-        media_type = "video"
-        video_obj = msg.get("video", {})
-        media_url = video_obj.get("url") or video_obj.get("href") or video_obj.get("file_id")
+    # 2. Kiểm tra attachment trực tiếp trong tin nhắn hiện tại
+    attachments = msg_data.get("attachments", [])
+    if attachments:
+        att = attachments[0]
+        att_type = att.get("type", "")
+        payload = att.get("payload", {})
+        media_url = payload.get("url") or payload.get("thumbnail")
+        if media_url:
+            return media_url, att_type
 
-    # Check trong tin nhắn được Reply (Quote) nếu chưa thấy media trực tiếp
-    if not media_url and "quote" in msg:
-        quote = msg["quote"]
-        if "photo" in quote or quote.get("type") == "photo":
-            media_type = "photo"
-            photos = quote.get("photo", [])
-            if isinstance(photos, list) and len(photos) > 0:
-                media_url = photos[-1].get("url") or photos[-1].get("href")
-            elif isinstance(photos, dict):
-                media_url = photos.get("url") or photos.get("href")
-        elif "video" in quote or quote.get("type") == "video":
-            media_type = "video"
-            video_obj = quote.get("video", {})
-            media_url = video_obj.get("url") or video_obj.get("href") or video_obj.get("file_id")
+    # 3. Kiểm tra trường link/url trực tiếp
+    media_url = msg_data.get("url") or msg_data.get("thumb")
+    if media_url:
+        return media_url, "image"
 
-    return media_type, media_url
+    return None, None
 
-@app.route("/", methods=["GET"])
-def home():
-    return "Zalo Bot GIF & Sticker Service đang chạy!", 200
+def convert_image_to_sticker(img_path, out_path):
+    with Image.open(img_path) as img:
+        img = img.convert("RGBA")
+        img.thumbnail((512, 512))
+        img.save(out_path, "PNG")
 
-@app.route("/webhook", methods=["POST"])
+def convert_video_to_sticker(video_path, out_path):
+    clip = VideoFileClip(video_path)
+    if clip.duration > 3:
+        clip = clip.subclipped(0, 3)
+    clip = clip.resized(height=512) if clip.h > clip.w else clip.resized(width=512)
+    clip.write_gif(out_path, fps=10)
+    clip.close()
+
+@app.route("/", methods=["GET", "POST"])
 def webhook():
+    if request.method == "GET":
+        return "Bot is running!", 200
+
     data = request.json or {}
-    print("Payload nhận từ Zalo Webhook:", data)
+    event_name = data.get("event_name", "")
 
-    message = data.get("message") or data.get("event", {})
-    if message:
-        chat_id = (
-            message.get("chat", {}).get("id") 
-            or data.get("sender", {}).get("id") 
-            or message.get("from", {}).get("id")
-        )
-        text = message.get("text", "").strip()
+    if event_name in ["user_send_text", "user_send_image", "user_send_video", "user_send_gif"]:
+        user_id = data.get("sender", {}).get("id")
+        message_obj = data.get("message", {})
+        text = message_obj.get("text", "").strip()
 
-        # Kiểm tra xem tin nhắn có chứa lệnh !sticker không
-        if "!sticker" in text.lower():
-            media_type, media_url = extract_media_from_msg(message)
+        if text.lower() == "!sticker":
+            media_url, media_type = extract_media_info(message_obj, data)
 
             if not media_url:
-                send_message(
-                    chat_id, 
-                    "⚠️ Lệnh không hợp lệ!\n\nHướng dẫn sử dụng:\n"
-                    "1️⃣ Trả lời (Reply) tin nhắn Ảnh/Video bằng chữ '!sticker'\n"
-                    "2️⃣ Gửi Video/Ảnh kèm chú thích '!sticker'"
+                send_zalo_message(
+                    user_id, 
+                    "⚠️ Không tìm thấy Ảnh/Video!\n\nHướng dẫn:\n1. Trả lời (Reply) tin nhắn Ảnh/Video bằng chữ '!sticker'\n2. Hoặc gửi Ảnh/Video kèm chú thích '!sticker'"
                 )
                 return jsonify({"status": "no_media"}), 200
 
-            # ----------------------------------------------------
-            # THƯỜNG HỢP 1: XỬ LÝ ẢNH -> STICKER (PNG/WEBP)
-            # ----------------------------------------------------
-            if media_type == "photo":
-                send_message(chat_id, "⏳ Đang xử lý ảnh sang dạng Sticker...")
-                try:
-                    local_img = "temp_input.jpg"
-                    local_sticker = "sticker_output.png"
+            try:
+                # Tải file media về server
+                res = requests.get(media_url, stream=True)
+                input_file = "input_temp"
+                with open(input_file, "wb") as f:
+                    for chunk in res.iter_content(chunk_size=8192):
+                        f.write(chunk)
 
-                    # Tải ảnh về
-                    res = requests.get(media_url)
-                    with open(local_img, "wb") as f:
-                        f.write(res.content)
+                output_file = "sticker_output.png" if "image" in media_type else "sticker_output.gif"
 
-                    # Resize ảnh về kích thước vuông chuẩn Sticker (512x512)
-                    im = Image.open(local_img)
-                    im.thumbnail((512, 512))
-                    im.save(local_sticker, "PNG")
+                if "image" in media_type:
+                    convert_image_to_sticker(input_file, output_file)
+                else:
+                    convert_video_to_sticker(input_file, output_file)
 
-                    send_message(chat_id, "✅ Đã chuyển đổi thành công Sticker từ ảnh của bạn!")
-                    
-                    # Dọn dẹp
-                    if os.path.exists(local_img): os.remove(local_img)
-                    if os.path.exists(local_sticker): os.remove(local_sticker)
+                # Thông báo xử lý hoàn tất
+                send_zalo_message(user_id, "✅ Đã chuyển đổi thành sticker thành công!")
 
-                except Exception as e:
-                    send_message(chat_id, f"❌ Lỗi khi xử lý ảnh: {str(e)}")
+                # Dọn dẹp file tạm
+                if os.path.exists(input_file): os.remove(input_file)
+                if os.path.exists(output_file): os.remove(output_file)
 
-            # ----------------------------------------------------
-            # THƯỜNG HỢP 2: XỬ LÝ VIDEO -> GIF
-            # ----------------------------------------------------
-            elif media_type == "video":
-                send_message(chat_id, "⏳ Đang tải video và bắt đầu chuyển đổi sang GIF...")
-                try:
-                    # Lấy download URL nếu media_url là file_id
-                    if not media_url.startswith("http"):
-                        file_res = requests.get(f"{ZALO_BOT_API}/getFile?file_id={media_url}").json()
-                        file_path = file_res.get("result", {}).get("file_path")
-                        if file_path:
-                            media_url = f"https://bot-api.zaloplatforms.com/file/bot{BOT_TOKEN}/{file_path}"
-
-                    local_video = "temp_video.mp4"
-                    local_gif = "output.gif"
-
-                    # Tải video về
-                    res = requests.get(media_url)
-                    with open(local_video, "wb") as f:
-                        f.write(res.content)
-
-                    # Chuyển đổi Video sang GIF bằng MoviePy
-                    clip = VideoFileClip(local_video)
-                    if clip.duration > 10:  # Giới hạn tối đa 10 giây nếu video quá dài
-                        clip = clip.subclip(0, 10)
-
-                    clip = clip.resized(width=380)
-                    clip.write_gif(local_gif, fps=10)
-                    clip.close()
-
-                    send_message(chat_id, "✅ Đã chuyển đổi thành công Video sang GIF!")
-
-                    # Dọn dẹp
-                    if os.path.exists(local_video): os.remove(local_video)
-                    if os.path.exists(local_gif): os.remove(local_gif)
-
-                except Exception as e:
-                    send_message(chat_id, f"❌ Lỗi khi xử lý video: {str(e)}")
-
-    return jsonify({"status": "ok"}), 200
+            except Exception as e:
+                print(f"Lỗi xử lý: {e}")
+                send_zalo_message(user_id, f"❌ Có lỗi xảy ra trong quá trình tạo sticker: {str(e)}")
+        
+    return jsonify({"status": "success"}), 200
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
     
