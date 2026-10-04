@@ -1,4 +1,4 @@
-from zalobot import Bot
+from zlapi import ZaloAPI
 from moviepy.editor import VideoFileClip
 import os
 
