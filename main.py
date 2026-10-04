@@ -4,9 +4,11 @@ import os
 
 # Điền mã Token bạn nhận được vào đây
 TOKEN = "3190358309365122943:zpTuopVRPXUKLTfSffkfkmHdeELRaTBzsZkFaePvtlwxnFotobiFKNOJbfRuAlAa"
-bot = Bot(TOKEN)
 
-@bot.on_message
+# Khởi tạo Zalo API
+client = ZaloAPI(TOKEN)
+
+@client.onMessage
 def handle_message(message):
     # Kiểm tra xem người dùng có gõ lệnh !sticker và có đính kèm video không
     if message.text == "!sticker" and message.has_video:
@@ -17,8 +19,8 @@ def handle_message(message):
         gif_path = "output.gif"
         
         # 2. Xử lý chuyển đổi video sang GIF
-        clip = VideoFileClip(video_path).resize(width=480) # Đặt chiều rộng 480px giống mẫu
-        clip.write_gif(gif_path, fps=15) # Giảm fps xuống 15 để tối ưu dung lượng
+        clip = VideoFileClip(video_path).resized(width=480)
+        clip.write_gif(gif_path, fps=15)
         
         # 3. Gửi tệp GIF/Sticker ngược lại nhóm chat Zalo
         message.reply_with_file(gif_path)
@@ -28,4 +30,4 @@ def handle_message(message):
         os.remove(video_path)
         os.remove(gif_path)
 
-bot.run()
+client.listen()
