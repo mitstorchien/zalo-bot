@@ -5,72 +5,75 @@ from moviepy import VideoFileClip
 
 app = Flask(__name__)
 
-# Token Zalo OA của bạn
-ACCESS_TOKEN = "3190358309365122943:zpTuopVRPXUkLTfSffkfkmHdeELRaTBzsZkFaePvtlwxnFotobiFKNOJbfRuAlAa"
-ZALO_API_URL = "https://openapi.zalo.me/v2.0/oa/message"
+# Token Bot của bạn (lấy từ Bot Creator)
+BOT_TOKEN = "3190358309365122943:zpTuopVRPXUkLTfSffkfkmHdeELRaTBzsZkFaePvtlwxnFotobiFKNOJbfRuAlAa"
+ZALO_BOT_API = f"https://bot.zaloplatforms.com/bot{BOT_TOKEN}"
 
-def send_zalo_message(user_id, text):
-    """Hàm gửi tin nhắn phản hồi qua Zalo OA API"""
-    headers = {
-        "access_token": ACCESS_TOKEN,
-        "Content-Type": "application/json"
-    }
+def send_message(chat_id, text):
+    """Gửi tin nhắn phản hồi tới nhóm hoặc cá nhân"""
+    url = f"{ZALO_BOT_API}/sendMessage"
     payload = {
-        "recipient": {"user_id": user_id},
-        "message": {"text": text}
+        "chat_id": chat_id,
+        "text": text
     }
-    requests.post(ZALO_API_URL, headers=headers, json=payload)
+    requests.post(url, json=payload)
 
 @app.route("/", methods=["GET"])
 def home():
-    return "Zalo OA Bot đang chạy!", 200
+    return "Zalo Bot Manager đang chạy!", 200
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    """Nhận sự kiện (Webhook) từ Zalo OA khi có người nhắn tin hoặc gửi video"""
+    """Nhận sự kiện tin nhắn từ nhóm chat Zalo"""
     data = request.json
-    print("Nhận dữ liệu Webhook:", data)
+    print("Dữ liệu nhận từ Zalo:", data)
 
-    if data and "event_name" in data:
-        event = data["event_name"]
-        sender_id = data.get("sender", {}).get("id")
+    if data and "message" in data:
+        msg = data["message"]
+        chat_id = msg.get("chat", {}).get("id")
+        text = msg.get("text", "")
 
-        # Khi người dùng gửi tin nhắn
-        if event == "user_send_text":
-            text = data.get("message", {}).get("text", "")
-            if text == "!sticker":
-                send_zalo_message(sender_id, "⏳ Vui lòng gửi kèm một video để tạo Sticker GIF!")
+        # Kiểm tra lệnh !sticker
+        if text.strip() == "!sticker":
+            send_message(chat_id, "⏳ Bạn hãy gửi kèm 1 video để bot tạo Sticker GIF nhé!")
 
-        # Khi người dùng gửi video
-        elif event == "user_send_video":
-            send_zalo_message(sender_id, "⏳ Đang tải và chuyển đổi video sang GIF...")
-            video_url = data.get("message", {}).get("attachments", [{}])[0].get("payload", {}).get("url")
+        # Kiểm tra nếu người dùng gửi video
+        elif "video" in data["message"]:
+            video_file_id = msg["video"].get("file_id")
+            send_message(chat_id, "⏳ Đang xử lý chuyển đổi video sang GIF...")
 
-            if video_url:
-                try:
-                    video_path = "temp_video.mp4"
-                    gif_path = "output.gif"
+            try:
+                # Lấy link tải video
+                file_info = requests.get(f"{ZALO_BOT_API}/getFile?file_id={video_file_id}").json()
+                file_path = file_info.get("result", {}).get("file_path")
+
+                if file_path:
+                    video_url = f"https://bot.zaloplatforms.com/file/bot{BOT_TOKEN}/{file_path}"
+                    local_video = "temp_video.mp4"
+                    local_gif = "output.gif"
 
                     # 1. Tải video
                     res = requests.get(video_url)
-                    with open(video_path, "wb") as f:
+                    with open(local_video, "wb") as f:
                         f.write(res.content)
 
-                    # 2. Convert video thành GIF
-                    clip = VideoFileClip(video_path).resized(width=480)
-                    clip.write_gif(gif_path, fps=15)
+                    # 2. Chuyển đổi sang GIF
+                    clip = VideoFileClip(local_video).resized(width=480)
+                    clip.write_gif(local_gif, fps=15)
 
-                    # 3. Thông báo tạo thành công
-                    send_zalo_message(sender_id, "✅ Đã tạo GIF thành công! (Lưu ý: Cần đăng ký Zalo OA Media API để gửi trực tiếp tệp GIF).")
+                    # 3. Gửi thông báo hoàn tất
+                    send_message(chat_id, "✅ Đã xử lý GIF thành công!")
 
-                    if os.path.exists(video_path): os.remove(video_path)
-                    if os.path.exists(gif_path): os.remove(gif_path)
+                    # Xóa file tạm
+                    if os.path.exists(local_video): os.remove(local_video)
+                    if os.path.exists(local_gif): os.remove(local_gif)
 
-                except Exception as e:
-                    send_zalo_message(sender_id, f"❌ Lỗi xử lý: {str(e)}")
+            except Exception as e:
+                send_message(chat_id, f"❌ Có lỗi xảy ra: {str(e)}")
 
-    return jsonify({"status": "success"}), 200
+    return jsonify({"status": "ok"}), 200
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+    
