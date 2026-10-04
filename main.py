@@ -1,42 +1,39 @@
 import os
+import requests
 from zlapi import ZaloAPI
 from moviepy import VideoFileClip
 
-# Điền Token Zalo Bot của bạn
-TOKEN = "3190358309365122943:zpTuopVRPXUKLTfSffkfkmHdeELRaTBzsZkFaePvtlwxnFotobiFKNOJbfRuAlAa"
+# Điền thông tin đăng nhập Zalo (Cookie và IMEI lấy từ trình duyệt)
+COOKIES = {
+    # Thay thế bằng cookies Zalo của bạn (hoặc dạng dict/json)
+}
+IMEI = "điền_imei_trình_duyệt_của_bạn"
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 class GifBot(ZaloAPI):
-    def __init__(self, token):
-        # Khởi tạo ZaloAPI với token
-        super().__init__(token, "")
+    def __init__(self, cookies, imei, user_agent):
+        super().__init__(phone="", password="", cookies=cookies, imei=imei, user_agent=user_agent)
 
     def onMessage(self, mid, author_id, message, message_object, thread_id, thread_type):
-        # Kiểm tra nội dung tin nhắn có phải !sticker không
         if isinstance(message, str) and message.strip() == "!sticker":
             self.send("⏳ Đang xử lý tạo GIF...", thread_id=thread_id, thread_type=thread_type)
             
-            # Kiểm tra nếu có file/video đính kèm
             if message_object and hasattr(message_object, 'attachUrl') and message_object.attachUrl:
                 try:
                     video_url = message_object.attachUrl
                     video_path = "temp_video.mp4"
                     gif_path = "output.gif"
 
-                    # 1. Tải video về
-                    import requests
                     res = requests.get(video_url)
                     with open(video_path, "wb") as f:
                         f.write(res.content)
 
-                    # 2. Xử lý chuyển đổi video sang GIF
                     clip = VideoFileClip(video_path).resized(width=480)
                     clip.write_gif(gif_path, fps=15)
 
-                    # 3. Gửi GIF lại Zalo
                     self.sendLocalFiles(gif_path, thread_id=thread_id, thread_type=thread_type)
                     self.send("✅ Đã tạo sticker GIF thành công!", thread_id=thread_id, thread_type=thread_type)
 
-                    # 4. Xóa file tạm
                     if os.path.exists(video_path): os.remove(video_path)
                     if os.path.exists(gif_path): os.remove(gif_path)
 
@@ -44,5 +41,7 @@ class GifBot(ZaloAPI):
                     self.send(f"❌ Lỗi xử lý: {str(e)}", thread_id=thread_id, thread_type=thread_type)
 
 if __name__ == "__main__":
-    bot = GifBot(TOKEN)
+    # Khởi tạo bot bằng Cookies & IMEI
+    bot = GifBot(COOKIES, IMEI, USER_AGENT)
     bot.listen()
+    
