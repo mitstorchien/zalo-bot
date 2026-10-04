@@ -1,47 +1,76 @@
 import os
 import requests
-from zlapi import ZaloAPI
+from flask import Flask, request, jsonify
 from moviepy import VideoFileClip
 
-# Điền thông tin đăng nhập Zalo (Cookie và IMEI lấy từ trình duyệt)
-COOKIES = {
-    # Thay thế bằng cookies Zalo của bạn (hoặc dạng dict/json)
-}
-IMEI = "điền_imei_trình_duyệt_của_bạn"
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+app = Flask(__name__)
 
-class GifBot(ZaloAPI):
-    def __init__(self, cookies, imei, user_agent):
-        super().__init__(phone="", password="", cookies=cookies, imei=imei, user_agent=user_agent)
+# Token Zalo OA của bạn
+ACCESS_TOKEN = "3190358309365122943:zpTuopVRPXUkLTfSffkfkmHdeELRaTBzsZkFaePvtlwxnFotobiFKNOJbfRuAlAa"
+ZALO_API_URL = "https://openapi.zalo.me/v2.0/oa/message"
 
-    def onMessage(self, mid, author_id, message, message_object, thread_id, thread_type):
-        if isinstance(message, str) and message.strip() == "!sticker":
-            self.send("⏳ Đang xử lý tạo GIF...", thread_id=thread_id, thread_type=thread_type)
-            
-            if message_object and hasattr(message_object, 'attachUrl') and message_object.attachUrl:
+def send_zalo_message(user_id, text):
+    """Hàm gửi tin nhắn phản hồi qua Zalo OA API"""
+    headers = {
+        "access_token": ACCESS_TOKEN,
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "recipient": {"user_id": user_id},
+        "message": {"text": text}
+    }
+    requests.post(ZALO_API_URL, headers=headers, json=payload)
+
+@app.route("/", methods=["GET"])
+def home():
+    return "Zalo OA Bot đang chạy!", 200
+
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    """Nhận sự kiện (Webhook) từ Zalo OA khi có người nhắn tin hoặc gửi video"""
+    data = request.json
+    print("Nhận dữ liệu Webhook:", data)
+
+    if data and "event_name" in data:
+        event = data["event_name"]
+        sender_id = data.get("sender", {}).get("id")
+
+        # Khi người dùng gửi tin nhắn
+        if event == "user_send_text":
+            text = data.get("message", {}).get("text", "")
+            if text == "!sticker":
+                send_zalo_message(sender_id, "⏳ Vui lòng gửi kèm một video để tạo Sticker GIF!")
+
+        # Khi người dùng gửi video
+        elif event == "user_send_video":
+            send_zalo_message(sender_id, "⏳ Đang tải và chuyển đổi video sang GIF...")
+            video_url = data.get("message", {}).get("attachments", [{}])[0].get("payload", {}).get("url")
+
+            if video_url:
                 try:
-                    video_url = message_object.attachUrl
                     video_path = "temp_video.mp4"
                     gif_path = "output.gif"
 
+                    # 1. Tải video
                     res = requests.get(video_url)
                     with open(video_path, "wb") as f:
                         f.write(res.content)
 
+                    # 2. Convert video thành GIF
                     clip = VideoFileClip(video_path).resized(width=480)
                     clip.write_gif(gif_path, fps=15)
 
-                    self.sendLocalFiles(gif_path, thread_id=thread_id, thread_type=thread_type)
-                    self.send("✅ Đã tạo sticker GIF thành công!", thread_id=thread_id, thread_type=thread_type)
+                    # 3. Thông báo tạo thành công
+                    send_zalo_message(sender_id, "✅ Đã tạo GIF thành công! (Lưu ý: Cần đăng ký Zalo OA Media API để gửi trực tiếp tệp GIF).")
 
                     if os.path.exists(video_path): os.remove(video_path)
                     if os.path.exists(gif_path): os.remove(gif_path)
 
                 except Exception as e:
-                    self.send(f"❌ Lỗi xử lý: {str(e)}", thread_id=thread_id, thread_type=thread_type)
+                    send_zalo_message(sender_id, f"❌ Lỗi xử lý: {str(e)}")
+
+    return jsonify({"status": "success"}), 200
 
 if __name__ == "__main__":
-    # Khởi tạo bot bằng Cookies & IMEI
-    bot = GifBot(COOKIES, IMEI, USER_AGENT)
-    bot.listen()
-    
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
