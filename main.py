@@ -10,8 +10,8 @@ app = Flask(__name__)
 BOT_TOKEN = "3190358309365122943:hCYFHLRIkeKUjgFZHcWvNstmMqmXunnCyYHDVFCcpxEUrCVrXwVRPVVKMFkOiVaD"
 ZALO_BOT_API = f"https://bot-api.zaloplatforms.com/bot{BOT_TOKEN}"
 
-# Bộ nhớ tạm lưu media theo msg_id: { msg_id: (media_url, media_type) }
-MEDIA_CACHE = {}
+# Bộ nhớ tạm lưu media gần nhất của từng chat: { chat_id: (media_url, media_type) }
+LAST_USER_MEDIA = {}
 
 def send_zalo_message(chat_id, text):
     """Gửi tin nhắn phản hồi"""
@@ -68,42 +68,27 @@ def webhook():
             or data.get("sender", {}).get("id") 
             or message.get("from", {}).get("id")
         )
-        msg_id = str(message.get("msg_id") or message.get("message_id") or "")
         text = (message.get("text") or "").strip()
 
-        # 1. Nếu tin nhắn gửi lên chứa Media -> Lưu vào Cache theo ID tin nhắn
-        curr_url, curr_type = find_media_in_payload(message)
-        if msg_id and curr_url:
-            MEDIA_CACHE[msg_id] = (curr_url, curr_type)
+        # 1. Nếu tin nhắn có chứa Ảnh/Video -> Lưu ngay vào LAST_USER_MEDIA
+        media_url, media_type = find_media_in_payload(message)
+        if media_url:
+            LAST_USER_MEDIA[chat_id] = (media_url, media_type)
 
         # 2. Xử lý khi nhận lệnh !sticker
         if "!sticker" in text.lower():
-            target_url, target_type = None, None
+            # Lấy media gần nhất mà user đã gửi trong chat này
+            target_url, target_type = LAST_USER_MEDIA.get(chat_id, (None, None))
 
-            # Kiểm tra xem người dùng có thao tác Trả lời (Reply) hay không
-            quote = message.get("quote") or message.get("quote_msg") or message.get("reply_to")
-            
-            if quote and isinstance(quote, dict):
-                # Lấy ID của tin nhắn được reply
-                quoted_msg_id = str(quote.get("msg_id") or quote.get("message_id") or quote.get("global_id") or "")
-                
-                # Tra cứu trong Cache
-                if quoted_msg_id in MEDIA_CACHE:
-                    target_url, target_type = MEDIA_CACHE[quoted_msg_id]
-                else:
-                    # Nếu Zalo gửi kèm thông tin đính kèm trong object quote
-                    target_url, target_type = find_media_in_payload(quote)
-
-            # Nếu không phải thao tác Reply hoặc không tìm thấy file
             if not target_url:
                 send_zalo_message(
                     chat_id, 
-                    "⚠️ Vui lòng Trả lời (Reply) trực tiếp vào tin nhắn Ảnh hoặc Video bằng lệnh '!sticker'!"
+                    "⚠️ Bạn chưa gửi Ảnh hoặc Video nào gần đây!\n\nHãy gửi 1 Ảnh/Video lên trước, sau đó nhắn '!sticker'."
                 )
-                return jsonify({"status": "no_reply_media"}), 200
+                return jsonify({"status": "no_media"}), 200
 
             try:
-                # Chuyển đổi file_id thành link tải nếu cần
+                # Nếu target_url là file_id từ Zalo API
                 if not str(target_url).startswith("http"):
                     file_res = requests.get(f"{ZALO_BOT_API}/getFile?file_id={target_url}").json()
                     file_path = file_res.get("result", {}).get("file_path")
