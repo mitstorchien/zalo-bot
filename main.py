@@ -1,7 +1,7 @@
 import os
 import requests
 from flask import Flask, request, jsonify
-from moviepy.editor import VideoFileClip
+from moviepy import VideoFileClip
 from PIL import Image
 
 app = Flask(__name__)
