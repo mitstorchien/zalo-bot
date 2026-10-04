@@ -21,36 +21,39 @@ def send_zalo_message(chat_id, text):
         print("LỖI GỬI TIN NHẮN:", e)
 
 def find_media_in_dict(data):
-    """Hàm tìm kiếm URL media linh hoạt trong JSON Zalo gửi về"""
-    if not isinstance(data, dict):
+    """Tìm kiếm URL/Link/File trong mọi tầng của JSON Zalo gửi về"""
+    if not data:
+        return None, None
+    
+    if isinstance(data, str):
+        if data.startswith("http://") or data.startswith("https://"):
+            if any(ext in data.lower() for ext in ['.mp4', '.mov', 'video']):
+                return data, "video"
+            return data, "photo"
         return None, None
 
-    # Tìm photo
-    if "photo" in data or data.get("type") == "photo":
-        photos = data.get("photo", [])
-        if isinstance(photos, list) and len(photos) > 0:
-            url = photos[-1].get("url") or photos[-1].get("href")
-            if url: return url, "photo"
-        elif isinstance(photos, dict):
-            url = photos.get("url") or photos.get("href")
-            if url: return url, "photo"
+    if isinstance(data, dict):
+        quote = data.get("quote") or data.get("quote_msg") or data.get("reply_to") or data.get("source")
+        if quote and quote != data:
+            url, mtype = find_media_in_dict(quote)
+            if url: return url, mtype
 
-    # Tìm video
-    if "video" in data or data.get("type") == "video":
-        video = data.get("video", {})
-        if isinstance(video, dict):
-            url = video.get("url") or video.get("href") or video.get("file_id")
-            if url: return url, "video"
+        for key in ["url", "href", "src", "download_url", "file_url", "preview_url", "thumbnail"]:
+            val = data.get(key)
+            if isinstance(val, str) and val.startswith("http"):
+                msg_type = data.get("type") or data.get("msg_type") or "photo"
+                return val, str(msg_type)
 
-    # Tìm trong attachments
-    attachments = data.get("attachments", [])
-    if isinstance(attachments, list):
-        for att in attachments:
-            att_type = att.get("type", "")
-            payload = att.get("payload", {})
-            url = payload.get("url") or payload.get("thumbnail") or payload.get("file_id")
-            if url:
-                return url, att_type
+        for key, val in data.items():
+            if key in ["chat", "sender", "from"]:
+                continue
+            url, mtype = find_media_in_dict(val)
+            if url: return url, mtype
+
+    elif isinstance(data, list):
+        for item in data:
+            url, mtype = find_media_in_dict(item)
+            if url: return url, mtype
 
     return None, None
 
@@ -74,35 +77,24 @@ def webhook():
         text = message.get("text", "").strip()
 
         if "!sticker" in text.lower():
-            media_url, media_type = None, None
-
-            # 1. Trích xuất trực tiếp từ tin nhắn
             media_url, media_type = find_media_in_dict(message)
 
-            # 2. Nếu không thấy, trích xuất từ phần Reply (Quote)
-            if not media_url:
-                quote = message.get("quote") or message.get("quote_msg")
-                if quote:
-                    media_url, media_type = find_media_in_dict(quote)
-
-            # Nếu vẫn không thấy media
+            # Nếu không thấy media
             if not media_url:
                 send_zalo_message(
                     chat_id, 
-                    "⚠️ Không tìm thấy Ảnh/Video!\n\nHướng dẫn:\n1️⃣ Trả lời (Reply) tin nhắn Ảnh/Video bằng chữ '!sticker'\n2️⃣ Gửi Ảnh/Video kèm chú thích '!sticker'"
+                    "⚠️ Vui lòng Trả lời (Reply) trực tiếp vào tin nhắn Ảnh hoặc Video bằng lệnh '!sticker'!"
                 )
                 return jsonify({"status": "no_media"}), 200
 
             # Tiến hành xử lý Media
             try:
-                # Nếu media_url dạng file_id của Zalo API
                 if not media_url.startswith("http"):
                     file_res = requests.get(f"{ZALO_BOT_API}/getFile?file_id={media_url}").json()
                     file_path = file_res.get("result", {}).get("file_path")
                     if file_path:
                         media_url = f"https://bot-api.zaloplatforms.com/file/bot{BOT_TOKEN}/{file_path}"
 
-                # Tải file về
                 res = requests.get(media_url, timeout=15)
                 input_file = "temp_input"
                 with open(input_file, "wb") as f:
@@ -126,7 +118,7 @@ def webhook():
                     clip.close()
                     send_zalo_message(chat_id, "✅ Đã xử lý xong GIF từ video!")
 
-                # Dọn dẹp
+                # Dọn dẹp file tạm
                 if os.path.exists(input_file): os.remove(input_file)
                 if os.path.exists("sticker.png"): os.remove("sticker.png")
                 if os.path.exists("sticker.gif"): os.remove("sticker.gif")
